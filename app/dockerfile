@@ -7,8 +7,8 @@ WORKDIR /app
 COPY images/ ./images/
 COPY db/ ./db/
 COPY go/ ./go/
-# COPY go.mod ./ 
-# COPY go.sum ./
+COPY go.mod ./ 
+COPY go.sum ./
 
 RUN chown -R trainee:mercari /app/db
 RUN go mod tidy
