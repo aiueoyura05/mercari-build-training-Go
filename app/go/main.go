@@ -23,7 +23,7 @@ import (
 const (
 	ImgDir   = "images"
 	JsonFile = "items.json"
-	DBfile   = "/Users/yurainagaki/Desktop/mercari-build-training-Go/db/mercari.sqlite3"
+	DBfile   = "../db/mercari.sqlite"
 )
 
 type Response struct {

@@ -1,0 +1,17 @@
+FROM golang:alpine3.19
+
+RUN apk add --no-cache gcc musl-dev git && \
+    addgroup -S mercari && adduser -S trainee -G mercari
+
+WORKDIR /app
+COPY images/ ./images/
+COPY db/ ./db/
+COPY go/ ./go/
+
+
+# chown -R trainee:mercari /app/db && \
+
+USER trainee
+
+EXPOSE 9000
+CMD ["go", "run", "app/main.go"]
