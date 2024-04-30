@@ -7,11 +7,15 @@ WORKDIR /app
 COPY images/ ./images/
 COPY db/ ./db/
 COPY go/ ./go/
+COPY go.mod ./ 
+COPY go.sum ./
 
+RUN chown -R trainee:mercari /app/db
+RUN go mod tidy
+RUN go build -o main ./go/main.go
 
-# chown -R trainee:mercari /app/db && \
 
 USER trainee
 
 EXPOSE 9000
-CMD ["go", "run", "app/main.go"]
+CMD ["./main"]

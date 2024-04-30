@@ -23,7 +23,7 @@ import (
 const (
 	ImgDir   = "images"
 	JsonFile = "items.json"
-	DBfile   = "../db/mercari.sqlite"
+	DBfile   = "db/mercari.sqlite"
 )
 
 type Response struct {
