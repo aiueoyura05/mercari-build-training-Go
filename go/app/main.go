@@ -1,30 +1,29 @@
 package main
 
 import (
-	"database/sql"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
-	"encoding/json"
-	"log"
-	"strconv"
+	// "encoding/json"
 	"io"
+	"log"
 	"mime/multipart"
 	"net/http"
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
-	_"github.com/mattn/go-sqlite3"
+	_ "github.com/mattn/go-sqlite3"
 )
 
 const (
 	ImgDir   = "images"
 	JsonFile = "items.json"
-	DBfile = "mercari.sqlite3"
-
+	DBfile   = "/Users/yurainagaki/Desktop/mercari-build-training-Go/db/mercari.sqlite3"
 )
 
 type Response struct {
@@ -32,10 +31,10 @@ type Response struct {
 }
 
 type Item struct {
-	Id 	 int    `json:"id"`
+	Id       int    `json:"id"`
 	Name     string `json:"name"`
 	Category string `json:"category"`
-	Image   string `json:"image_name"`
+	Image    string `json:"image_name"`
 }
 
 type Items struct {
@@ -43,14 +42,26 @@ type Items struct {
 }
 
 func createTable(db *sql.DB) error {
+
 	createTableSQL := `CREATE TABLE IF NOT EXISTS items (
 		Id INTEGER PRIMARY KEY AUTOINCREMENT,
 		Name TEXT NOT NULL,
-		Category TEXT NOT NULL,
-		Image TEXT NOT NULL
+		CategoryId INTEGER NOT NULL,
+		Image TEXT NOT NULL,
+		FOREIGN KEY (CategoryId) REFERENCES categories(Id)
 	);`
+
 	_, err := db.Exec(createTableSQL)
 	if err != nil {
+		return err
+	}
+
+	categoriesTableSQL := `CREATE TABLE IF NOT EXISTS categories (
+        Id INTEGER PRIMARY KEY AUTOINCREMENT,
+        Name TEXT NOT NULL
+    );`
+
+	if _, err := db.Exec(categoriesTableSQL); err != nil {
 		return err
 	}
 	return nil
@@ -63,10 +74,25 @@ func root(c echo.Context) error {
 
 func addItem(c echo.Context, db *sql.DB) error {
     name := c.FormValue("name")
-    category := c.FormValue("category")
+    categoryIdStr := c.FormValue("category_id")  // category_id をフォームから取得
     fileHeader, err := c.FormFile("image")
     if err != nil {
         return echo.NewHTTPError(http.StatusBadRequest, "Image file is required")
+    }
+
+    categoryId, err := strconv.Atoi(categoryIdStr)  // 文字列から整数への変換
+    if err != nil {
+        return echo.NewHTTPError(http.StatusBadRequest, "Invalid category ID")
+    }
+
+    // category_id の存在チェック
+    var exists bool
+    err = db.QueryRow("SELECT EXISTS(SELECT 1 FROM categories WHERE Id = ?)", categoryId).Scan(&exists)
+    if err != nil {
+        return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+    }
+    if !exists {
+        return echo.NewHTTPError(http.StatusBadRequest, "Category not found")
     }
 
     hashedImageName, err := hashAndSaveImage(fileHeader)
@@ -74,18 +100,36 @@ func addItem(c echo.Context, db *sql.DB) error {
         return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
     }
 
-    _, err = db.Exec("INSERT INTO items (Name, Category, Image) VALUES (?, ?, ?)", name, category, hashedImageName)
+    _, err = db.Exec("INSERT INTO items (Name, CategoryId, Image) VALUES (?, ?, ?)", name, categoryId, hashedImageName)
     if err != nil {
         return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
     }
 
     return c.JSON(http.StatusOK, echo.Map{
-        "message": "Item added successfully",
-        "name": name,
-        "category": category,
-        "image": hashedImageName,
+        "message":  "Item added successfully",
+        "name":     name,
+        "category_id": categoryId,
+        "image":    hashedImageName,
     })
 }
+
+
+func addCategory(c echo.Context, db *sql.DB) error {
+    // フォームからカテゴリ名を取得
+    categoryName := c.FormValue("name")
+    if categoryName == "" {
+        return echo.NewHTTPError(http.StatusBadRequest, "Category name is required")
+    }
+
+    // カテゴリをデータベースに挿入
+    _, err := db.Exec("INSERT INTO categories (Name) VALUES (?)", categoryName)
+    if err != nil {
+        return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+    }
+
+    return c.JSON(http.StatusOK, echo.Map{"message": "Category added successfully"})
+}
+
 
 // func addItem(c echo.Context) error {
 // 	// Get form data
@@ -120,58 +164,64 @@ func addItem(c echo.Context, db *sql.DB) error {
 
 func hashAndSaveImage(fileHeader *multipart.FileHeader) (string, error) {
 
-    src, err := fileHeader.Open()
-    if err != nil {
-        return "", err
-    }
-    defer src.Close()
+	src, err := fileHeader.Open()
+	if err != nil {
+		return "", err
+	}
+	defer src.Close()
 
-    hasher := sha256.New()
-    if _, err := io.Copy(hasher, src); err != nil {
-        return "", err
-    }
-    hashedFilename := hex.EncodeToString(hasher.Sum(nil)) + ".jpg"
-    imagePath := filepath.Join(ImgDir, hashedFilename)
+	hasher := sha256.New()
+	if _, err := io.Copy(hasher, src); err != nil {
+		return "", err
+	}
+	hashedFilename := hex.EncodeToString(hasher.Sum(nil)) + ".jpg"
+	imagePath := filepath.Join(ImgDir, hashedFilename)
 
-    if _, err := os.Stat(ImgDir); os.IsNotExist(err) {
-        os.Mkdir(ImgDir, 0755)
-    }
+	if _, err := os.Stat(ImgDir); os.IsNotExist(err) {
+		os.Mkdir(ImgDir, 0755)
+	}
 
-    src.Seek(0, io.SeekStart)
+	src.Seek(0, io.SeekStart)
 
-    out, err := os.Create(imagePath)
-    if err != nil {
-        return "", err
-    }
-    defer out.Close()
+	out, err := os.Create(imagePath)
+	if err != nil {
+		return "", err
+	}
+	defer out.Close()
 
-    if _, err = io.Copy(out, src); err != nil {
-        return "", err
-    }
+	if _, err = io.Copy(out, src); err != nil {
+		return "", err
+	}
 
-    return hashedFilename, nil
+	return hashedFilename, nil
 }
 
 func getItems(db *sql.DB) ([]Item, error) {
-	rows, err := db.Query("SELECT Id, Name, Category, Image FROM items")
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
+    rows, err := db.Query(`
+        SELECT i.Id, i.Name, c.Name AS Category, i.Image 
+        FROM items i
+        JOIN categories c ON i.CategoryId = c.Id
+    `)
+    if err != nil {
+        return nil, err
+    }
+    defer rows.Close()
 
-	var items []Item
-	for rows.Next() {
-		var item Item
-		if err := rows.Scan(&item.Id, &item.Name, &item.Category, &item.Image); err != nil {
-			return nil, err
-		}
-		items = append(items, item)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
+    var items []Item
+    for rows.Next() {
+        var item Item
+        if err := rows.Scan(&item.Id, &item.Name, &item.Category, &item.Image); err != nil {
+            return nil, err
+        }
+        items = append(items, item)
+    }
+    if err := rows.Err(); err != nil {
+        return nil, err
+    }
+    return items, nil
 }
+
+
 func getItemsHandler(c echo.Context, db *sql.DB) error {
 	items, err := getItems(db)
 	if err != nil {
@@ -180,8 +230,7 @@ func getItemsHandler(c echo.Context, db *sql.DB) error {
 	return c.JSON(http.StatusOK, items)
 }
 
-
-// func getItems() (Items, error) { 
+// func getItems() (Items, error) {
 // 	var items Items
 // 	file, err := os.ReadFile(JsonFile)
 // 	if err != nil {
@@ -245,7 +294,6 @@ func getItemByID(db *sql.DB, id int) (Item, error) {
 // 	return c.JSON(http.StatusNotFound, Response{Message: "Item not found"})
 // }
 
-
 func getImg(c echo.Context) error {
 	imgPath := path.Join(ImgDir, c.Param("imageFilename"))
 
@@ -260,14 +308,13 @@ func getImg(c echo.Context) error {
 	return c.File(imgPath)
 }
 
-
-func saveItems(items Items) error {
-	file, err := json.MarshalIndent(items, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(JsonFile, file, 0644)
-}
+// func saveItems(items Items) error {
+// 	file, err := json.MarshalIndent(items, "", "  ")
+// 	if err != nil {
+// 		return err
+// 	}
+// 	return os.WriteFile(JsonFile, file, 0644)
+// }
 
 func main() {
 	e := echo.New()
@@ -286,8 +333,8 @@ func main() {
 	//Open DB
 	db, err := sql.Open("sqlite3", DBfile)
 	if err != nil {
-		log.Fatal(err)	
-	}	
+		log.Fatal("Failed to open database:", err)
+	}
 	defer db.Close()
 
 	err = createTable(db)
@@ -298,20 +345,26 @@ func main() {
 
 	// Routes
 	e.GET("/", root)
-    e.POST("/items", func(c echo.Context) error {
-        return addItem(c, db) // Pass db to the handler
-    })
-    e.GET("/items", func(c echo.Context) error {
-        return getItemsHandler(c, db) // Pass db to the handler
-    })
-    e.GET("/image/:imageFilename", getImg)
-    e.GET("/items/:id", func(c echo.Context) error {
-        return getItemByIDHandler(c, db) // Pass db to the handler
-    })
-	
+	e.POST("/items", func(c echo.Context) error {
+		return addItem(c, db) // Pass db to the handler
+	})
+	e.GET("/items", func(c echo.Context) error {
+		return getItemsHandler(c, db) // Pass db to the handler
+	})
+	e.GET("/image/:imageFilename", getImg)
+	e.GET("/items/:id", func(c echo.Context) error {
+		return getItemByIDHandler(c, db) // Pass db to the handler
+	})
+	e.POST("/categories", func(c echo.Context) error {
+		return addCategory(c, db) 
+	})
 
 	// Start server
 	e.Logger.Fatal(e.Start(":9000"))
 }
 
-
+// curl -X POST http://localhost:9000/categories \-F 'name=fashion'
+//  curl -X POST http://localhost:9000/items \
+//     -F 'name=new jacket' \
+//     -F 'category_id=1' \   
+//     -F 'images/default.jpg'
