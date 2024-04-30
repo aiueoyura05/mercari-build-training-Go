@@ -9,10 +9,12 @@ COPY db/ ./db/
 COPY go/ ./go/
 
 
-COPY go.sum ./
-COPY go.mod ./ 
+COPY go.sum ./go
+COPY go.mod ./go
 
 RUN chown -R trainee:mercari /app/db
+
+WORKDIR /go
 RUN go mod tidy
 RUN go build -o main ./go/main.go
 
